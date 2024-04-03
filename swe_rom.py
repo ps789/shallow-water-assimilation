@@ -32,36 +32,35 @@ import torch.nn as nn
 torch.set_default_dtype(torch.float16) # half precision
 device = 'cuda'
 
+class Triple_Layer_with_Embedding(nn.Module):
+    def __init__(self, input_dim=100, hidden_dim=100, output_dim=100):
+        super(Triple_Layer_with_Embedding, self).__init__()
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.lrelu = nn.LeakyReLU(0.2)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.linear3 = nn.Linear(hidden_dim, output_dim)
+        self.t_linear = nn.Linear(1, hidden_dim)
+
+    def forward(self, input):
+        x, t = input
+        t_embed = self.t_linear(t)
+        x = self.lrelu(self.linear1(x) + t_embed)
+        x = self.lrelu(self.linear2(x) + t_embed)
+        x = self.linear3(x)
+        return(x)
+    
 class VAE(nn.Module):
     def __init__(self, input_dim=100, sample_dim= 10, hidden_dim=100, latent_dim=10):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
         # encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, latent_dim*2)
-            )
+        self.encoder = Triple_Layer_with_Embedding(input_dim, hidden_dim, latent_dim*2)
         
         # encoder
-        self.encoder_sample = nn.Sequential(
-            nn.Linear(sample_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, latent_dim*2)
-            )
+        self.encoder_sample = Triple_Layer_with_Embedding(sample_dim, hidden_dim, latent_dim*2)
     
         # decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, input_dim)
-            )
+        self.decoder = Triple_Layer_with_Embedding(latent_dim, hidden_dim, input_dim)
      
     def encode(self, x):
         x = self.encoder(x)
@@ -83,15 +82,17 @@ class VAE(nn.Module):
     def decode(self, x):
         return self.decoder(x)
 
-    def forward(self, x):
-        mean, logvar = self.encode(x)
+    def forward(self, input):
+        _, t = input
+        mean, logvar = self.encode(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
-    def forward_sample(self, x):
-        mean, logvar = self.encode_sample(x)
+    def forward_sample(self, input):
+        _, t = input
+        mean, logvar = self.encode_sample(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
     
 mseloss = torch.nn.MSELoss(reduction='mean')
@@ -316,8 +317,9 @@ while (time_step < max_time_step):
     eta_n = np.copy(eta_np1)    # Update eta for next iteration
 
     target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).view(1, -1).to(device)
-    x_hat, mean, log_var = model(target)
-    x_hat_sample, mean_sample, log_var_sample = model.forward_sample(target[:, ::25])
+    t_rep = torch.Tensor([time_step*dt]*target.shape[0], device = device)
+    x_hat, mean, log_var = model((target, t_rep))
+    x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, ::25], t_rep))
     u_n_decoded, v_n_decoded, eta_n_decoded = x_hat[0].view(3, 150, 150)[0].detach().cpu().numpy(), x_hat.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat.view(3, 150, 150)[2].detach().cpu().numpy()
     u_n_decoded_sparse, v_n_decoded_sparse, eta_n_decoded_sparse = x_hat_sample.view(3, 150, 150)[0].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[2].detach().cpu().numpy()
     time_step += 1

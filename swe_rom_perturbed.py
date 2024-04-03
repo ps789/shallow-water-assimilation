@@ -32,36 +32,36 @@ import torch.nn as nn
 torch.set_default_dtype(torch.float32) # half precision
 device = 'cuda'
 
+
+class Triple_Layer_with_Embedding(nn.Module):
+    def __init__(self, input_dim=100, hidden_dim=100, output_dim=100):
+        super(Triple_Layer_with_Embedding, self).__init__()
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.lrelu = nn.LeakyReLU(0.2)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.linear3 = nn.Linear(hidden_dim, output_dim)
+        self.t_linear = nn.Linear(1, hidden_dim)
+
+    def forward(self, input):
+        x, t = input
+        t_embed = self.t_linear(t)
+        x = self.lrelu(self.linear1(x) + t_embed)
+        x = self.lrelu(self.linear2(x) + t_embed)
+        x = self.linear3(x)
+        return(x)
+    
 class VAE(nn.Module):
     def __init__(self, input_dim=100, sample_dim= 10, hidden_dim=100, latent_dim=10):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
         # encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, latent_dim*2)
-            )
+        self.encoder = Triple_Layer_with_Embedding(input_dim, hidden_dim, latent_dim*2)
         
         # encoder
-        self.encoder_sample = nn.Sequential(
-            nn.Linear(sample_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, latent_dim*2)
-            )
+        self.encoder_sample = Triple_Layer_with_Embedding(sample_dim, hidden_dim, latent_dim*2)
     
         # decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, input_dim)
-            )
+        self.decoder = Triple_Layer_with_Embedding(latent_dim, hidden_dim, input_dim)
      
     def encode(self, x):
         x = self.encoder(x)
@@ -83,16 +83,19 @@ class VAE(nn.Module):
     def decode(self, x):
         return self.decoder(x)
 
-    def forward(self, x):
-        mean, logvar = self.encode(x)
+    def forward(self, input):
+        _, t = input
+        mean, logvar = self.encode(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
-    def forward_sample(self, x):
-        mean, logvar = self.encode_sample(x)
+    def forward_sample(self, input):
+        _, t = input
+        mean, logvar = self.encode_sample(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
+    
     
 mseloss = torch.nn.MSELoss(reduction='mean')
 def loss_function(x, x_hat, mean, log_var):
@@ -128,7 +131,7 @@ param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 N_x = 150                            # Number of grid points in x-direction
 N_y = 150                            # Number of grid points in y-direction
 
-model = VAE(150*150*3, 3*150*150//25, 400, 100).to(device)
+model = VAE(150*150*3, 3*150*150//25, 784, 128).to(device)
 temp_model = torch.load("model_rom.ckpt")
 model.load_state_dict(temp_model.state_dict())
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
@@ -640,7 +643,8 @@ while (time_step < max_time_step):
             target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).view(u_n.shape[0], -1).to(device)
             x_hat_current, mean_current, log_var_current = model(target)
             x_hat, mean, log_var = model(target_true)
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample(target_true[:, ::25])
+            t_rep = torch.Tensor([time_step*dt]*target_true.shape[0], device = device)
+            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target_true[:, ::25], t_rep))
             latent = model.decode(torch.Tensor(my_EnKF(mean_current.detach().cpu().numpy().T, mean.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, -1)).reshape(ensemble_size, 3, 150, 150).detach().cpu().numpy()
             eta_n = latent[:, 2, :, :]
             u_n = latent[:, 0, :, :]

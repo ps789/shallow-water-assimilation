@@ -12,9 +12,10 @@ data_t = data_t/np.max(data_t)
 
 class Triple_Layer_with_Embedding(nn.Module):
     def __init__(self, input_dim=100, hidden_dim=100, output_dim=100):
-        self.linear1 = nn.Linear(input_dim, hidden_dim),
-        self.lrelu = nn.LeakyReLU(0.2),
-        self.linear2 = nn.Linear(hidden_dim, hidden_dim),
+        super(Triple_Layer_with_Embedding, self).__init__()
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.lrelu = nn.LeakyReLU(0.2)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
         self.linear3 = nn.Linear(hidden_dim, output_dim)
         self.t_linear = nn.Linear(1, hidden_dim)
 
@@ -59,15 +60,17 @@ class VAE(nn.Module):
     def decode(self, x):
         return self.decoder(x)
 
-    def forward(self, x):
-        mean, logvar = self.encode(x)
+    def forward(self, input):
+        _, t = input
+        mean, logvar = self.encode(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
-    def forward_sample(self, x):
-        mean, logvar = self.encode_sample(x)
+    def forward_sample(self, input):
+        _, t = input
+        mean, logvar = self.encode_sample(input)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
+        x_hat = self.decode((z, t))
         return x_hat, mean, logvar
     
 mseloss = torch.nn.MSELoss(reduction='sum')
@@ -107,9 +110,8 @@ def train_epoch(model, optimizer, train_loader):
         for i, value in enumerate(train_loader):
             x, y, t = value
             target = x.view(x.shape[0], -1)
-            print(t.shape)
             optimizer.zero_grad()
-            x_hat, mean, log_var = model(target)
+            x_hat, mean, log_var = model((target, t))
             x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, ::25], t))
             target_reconstruction, loss_target = loss_function(target, x_hat, mean, log_var)
             sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
@@ -130,8 +132,8 @@ def valid_epoch(model, valid_loader):
             x, y, t = value
             target = x.view(x.shape[0], -1)
             optimizer.zero_grad()
-            x_hat, mean, log_var = model(target)
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample(target[:, ::25])
+            x_hat, mean, log_var = model((target, t))
+            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, ::25], t))
             target_reconstruction, loss_target = loss_function(target, x_hat, mean, log_var)
             sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
             loss = loss_target + loss_sample
