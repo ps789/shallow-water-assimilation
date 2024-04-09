@@ -109,6 +109,7 @@ def train_epoch(model, optimizer, train_loader):
     with tqdm(total=len(train_loader), desc=f"Train {epoch}: ") as pbar:
         for i, value in enumerate(train_loader):
             x, y, t = value
+            t = t/21/5000
             target = x.view(x.shape[0], -1)
             optimizer.zero_grad()
             x_hat, mean, log_var = model((target, t))

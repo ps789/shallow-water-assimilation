@@ -44,8 +44,8 @@ class Triple_Layer_with_Embedding(nn.Module):
     def forward(self, input):
         x, t = input
         t_embed = self.t_linear(t)
-        x = self.lrelu(self.linear1(x) + t_embed)
-        x = self.lrelu(self.linear2(x) + t_embed)
+        x = self.lrelu(self.linear1(x))
+        x = self.lrelu(self.linear2(x))
         x = self.linear3(x)
         return(x)
     
@@ -94,7 +94,7 @@ class VAE(nn.Module):
         z = self.reparameterization(mean, logvar)
         x_hat = self.decode((z, t))
         return x_hat, mean, logvar
-    
+
 mseloss = torch.nn.MSELoss(reduction='mean')
 def loss_function(x, x_hat, mean, log_var):
     reproduction_loss = mseloss(x_hat, x)
@@ -129,7 +129,7 @@ param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 N_x = 150                            # Number of grid points in x-direction
 N_y = 150                            # Number of grid points in y-direction
 
-model = VAE(150*150*3, 3*150*150//25, 400, 100).to(device)
+model = VAE(150*150*3, 3*150*150//25, 784, 128).to(device)
 temp_model = torch.load("model_rom.ckpt")
 model.load_state_dict(temp_model.state_dict())
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
@@ -232,7 +232,10 @@ v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
 # Initial condition for eta.
 #eta_n[:, :] = np.sin(4*np.pi*X/L_y) + np.sin(4*np.pi*Y/L_y)
 #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
-eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
+# eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
+
+output = np.random.rand(2)
+eta_n = np.exp(-((X+L_x/2-output[0]*L_x)**2/(2*(0.05E+6)**2) + (Y+L_y/2-output[1]*L_y)**2/(2*(0.05E+6)**2)))
 #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
 #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
 #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
@@ -315,13 +318,6 @@ while (time_step < max_time_step):
     u_n = np.copy(u_np1)        # Update u for next iteration
     v_n = np.copy(v_np1)        # Update v for next iteration
     eta_n = np.copy(eta_np1)    # Update eta for next iteration
-
-    target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).view(1, -1).to(device)
-    t_rep = torch.Tensor([time_step*dt]*target.shape[0], device = device)
-    x_hat, mean, log_var = model((target, t_rep))
-    x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, ::25], t_rep))
-    u_n_decoded, v_n_decoded, eta_n_decoded = x_hat[0].view(3, 150, 150)[0].detach().cpu().numpy(), x_hat.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat.view(3, 150, 150)[2].detach().cpu().numpy()
-    u_n_decoded_sparse, v_n_decoded_sparse, eta_n_decoded_sparse = x_hat_sample.view(3, 150, 150)[0].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[2].detach().cpu().numpy()
     time_step += 1
 
     # Samples for Hovmuller diagram and spectrum every sample_interval time step.
@@ -341,6 +337,13 @@ while (time_step < max_time_step):
 
     # Store eta and (u, v) every anin_interval time step for animations.
     if (time_step % anim_interval == 0):
+        target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).view(1, -1).to(device)
+        t_rep = torch.Tensor([time_step*dt/21/5000]*target.shape[0]).to(device)
+        x_hat, mean, log_var = model((target, t_rep))
+        x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, ::25], t_rep))
+        u_n_decoded, v_n_decoded, eta_n_decoded = x_hat[0].view(3, 150, 150)[0].detach().cpu().numpy(), x_hat.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat.view(3, 150, 150)[2].detach().cpu().numpy()
+        u_n_decoded_sparse, v_n_decoded_sparse, eta_n_decoded_sparse = x_hat_sample.view(3, 150, 150)[0].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[2].detach().cpu().numpy()
+
         print("Time: \t{:.2f} hours".format(time_step*dt/3600))
         print("Step: \t{} / {}".format(time_step, max_time_step))
         print("Mass: \t{}\n".format(np.sum(eta_n)))
