@@ -17,13 +17,17 @@ class Triple_Layer_with_Embedding(nn.Module):
         self.lrelu = nn.LeakyReLU(0.2)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim)
         self.linear3 = nn.Linear(hidden_dim, output_dim)
-        self.t_linear = nn.Linear(1, hidden_dim)
+        self.t_linear = nn.Sequential(
+            nn.Linear(1, hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
 
     def forward(self, input):
         x, t = input
         t_embed = self.t_linear(t)
         x = self.lrelu(self.linear1(x) + t_embed)
-        x = self.lrelu(self.linear2(x) + t_embed)
+        x = self.lrelu(self.linear2(x))
         x = self.linear3(x)
         return(x)
     
@@ -109,6 +113,7 @@ def train_epoch(model, optimizer, train_loader):
     with tqdm(total=len(train_loader), desc=f"Train {epoch}: ") as pbar:
         for i, value in enumerate(train_loader):
             x, y, t = value
+            t = t/21/5000
             target = x.view(x.shape[0], -1)
             optimizer.zero_grad()
             x_hat, mean, log_var = model((target, t))
@@ -130,6 +135,7 @@ def valid_epoch(model, valid_loader):
     with tqdm(total=len(valid_loader), desc=f"Valid {epoch}: ") as pbar:
         for i, value in enumerate(valid_loader):
             x, y, t = value
+            t = t/21/5000
             target = x.view(x.shape[0], -1)
             optimizer.zero_grad()
             x_hat, mean, log_var = model((target, t))
