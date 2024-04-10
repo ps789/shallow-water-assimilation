@@ -32,6 +32,69 @@ import torch.nn as nn
 torch.set_default_dtype(torch.float16) # half precision
 device = 'cuda'
 
+# class Triple_Layer_with_Embedding(nn.Module):
+#     def __init__(self, input_dim=100, hidden_dim=100, output_dim=100):
+#         super(Triple_Layer_with_Embedding, self).__init__()
+#         self.linear1 = nn.Linear(input_dim, hidden_dim)
+#         self.lrelu = nn.LeakyReLU(0.2)
+#         self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+#         self.linear3 = nn.Linear(hidden_dim, output_dim)
+#         self.t_linear = nn.Linear(1, hidden_dim)
+
+#     def forward(self, input):
+#         x, t = input
+#         t_embed = self.t_linear(t)
+#         x = self.lrelu(self.linear1(x) + t_embed)
+#         x = self.lrelu(self.linear2(x) + t_embed)
+#         x = self.linear3(x)
+#         return(x)
+    
+# class VAE(nn.Module):
+#     def __init__(self, input_dim=100, sample_dim= 10, hidden_dim=100, latent_dim=10):
+#         super(VAE, self).__init__()
+#         self.latent_dim = latent_dim
+#         # encoder
+#         self.encoder = Triple_Layer_with_Embedding(input_dim, hidden_dim, latent_dim*2)
+        
+#         # encoder
+#         self.encoder_sample = Triple_Layer_with_Embedding(sample_dim, hidden_dim, latent_dim*2)
+    
+#         # decoder
+#         self.decoder = Triple_Layer_with_Embedding(latent_dim, hidden_dim, input_dim)
+     
+#     def encode(self, x):
+#         x = self.encoder(x)
+#         mean = x[:, :self.latent_dim]
+#         logvar = x[:, self.latent_dim:]
+#         return mean, logvar
+    
+#     def encode_sample(self, x):
+#         x = self.encoder_sample(x)
+#         mean = x[:, :self.latent_dim]
+#         logvar = x[:, self.latent_dim:]
+#         return mean, logvar
+
+#     def reparameterization(self, mean, var):
+#         epsilon = torch.randn_like(var).to(device)      
+#         z = mean + var*epsilon
+#         return z
+
+#     def decode(self, x):
+#         return self.decoder(x)
+
+#     def forward(self, input):
+#         _, t = input
+#         mean, logvar = self.encode(input)
+#         z = self.reparameterization(mean, logvar)
+#         x_hat = self.decode((z, t))
+#         return x_hat, mean, logvar
+#     def forward_sample(self, input):
+#         _, t = input
+#         mean, logvar = self.encode_sample(input)
+#         z = self.reparameterization(mean, logvar)
+#         x_hat = self.decode((z, t))
+#         return x_hat, mean, logvar
+
 class Triple_Layer_with_Embedding(nn.Module):
     def __init__(self, input_dim=100, hidden_dim=100, output_dim=100):
         super(Triple_Layer_with_Embedding, self).__init__()
@@ -39,7 +102,11 @@ class Triple_Layer_with_Embedding(nn.Module):
         self.lrelu = nn.LeakyReLU(0.2)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim)
         self.linear3 = nn.Linear(hidden_dim, output_dim)
-        self.t_linear = nn.Linear(1, hidden_dim)
+        self.t_linear = nn.Sequential(
+            nn.Linear(1, hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
 
     def forward(self, input):
         x, t = input
