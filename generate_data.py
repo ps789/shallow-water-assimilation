@@ -121,140 +121,140 @@ if (use_sink is True):
 # Write all parameters out to file.
 with open("param_output.txt", "w") as output_file:
     output_file.write(param_string)
+for currnum in range(20):
+    print(param_string)     # Also print parameters to screen
+    x_data = []
+    y_data = []
+    t_data = []
+    # ============================= Parameter stuff done ===============================
+    for pbar in tqdm(range(50)):
+        time_step = 1                        # For counting time loop steps
+        # ==================================================================================
+        # ==================== Allocating arrays and initial conditions ====================
+        # ==================================================================================
+        u_n = np.zeros((N_x, N_y))      # To hold u at current time step
+        u_np1 = np.zeros((N_x, N_y))    # To hold u at next time step
+        v_n = np.zeros((N_x, N_y))      # To hold v at current time step
+        v_np1 = np.zeros((N_x, N_y))    # To hold v at enxt time step
+        eta_n = np.zeros((N_x, N_y))    # To hold eta at current time step
+        eta_np1 = np.zeros((N_x, N_y))  # To hold eta at next time step
 
-print(param_string)     # Also print parameters to screen
-x_data = []
-y_data = []
-t_data = []
-# ============================= Parameter stuff done ===============================
-for pbar in tqdm(range(500)):
-    time_step = 1                        # For counting time loop steps
-    # ==================================================================================
-    # ==================== Allocating arrays and initial conditions ====================
-    # ==================================================================================
-    u_n = np.zeros((N_x, N_y))      # To hold u at current time step
-    u_np1 = np.zeros((N_x, N_y))    # To hold u at next time step
-    v_n = np.zeros((N_x, N_y))      # To hold v at current time step
-    v_np1 = np.zeros((N_x, N_y))    # To hold v at enxt time step
-    eta_n = np.zeros((N_x, N_y))    # To hold eta at current time step
-    eta_np1 = np.zeros((N_x, N_y))  # To hold eta at next time step
+        # Temporary variables (each time step) for upwind scheme in eta equation
+        h_e = np.zeros((N_x, N_y))
+        h_w = np.zeros((N_x, N_y))
+        h_n = np.zeros((N_x, N_y))
+        h_s = np.zeros((N_x, N_y))
+        uhwe = np.zeros((N_x, N_y))
+        vhns = np.zeros((N_x, N_y))
 
-    # Temporary variables (each time step) for upwind scheme in eta equation
-    h_e = np.zeros((N_x, N_y))
-    h_w = np.zeros((N_x, N_y))
-    h_n = np.zeros((N_x, N_y))
-    h_s = np.zeros((N_x, N_y))
-    uhwe = np.zeros((N_x, N_y))
-    vhns = np.zeros((N_x, N_y))
+        # Initial conditions for u and v.
+        u_n[:, :] = 0.0             # Initial condition for u
+        v_n[:, :] = 0.0             # Initial condition for u
+        u_n[-1, :] = 0.0            # Ensuring initial u satisfy BC
+        v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
 
-    # Initial conditions for u and v.
-    u_n[:, :] = 0.0             # Initial condition for u
-    v_n[:, :] = 0.0             # Initial condition for u
-    u_n[-1, :] = 0.0            # Ensuring initial u satisfy BC
-    v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
+        # Initial condition for eta.
+        #eta_n[:, :] = np.sin(4*np.pi*X/L_y) + np.sin(4*np.pi*Y/L_y)
+        #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
+        output = np.random.rand(2)
+        eta_n = np.exp(-((X+L_x/2-output[0]*L_x)**2/(2*(0.05E+6)**2) + (Y+L_y/2-output[1]*L_y)**2/(2*(0.05E+6)**2)))
+        #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
+        #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
+        #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
+        #eta_n[:, :] = 0.0
 
-    # Initial condition for eta.
-    #eta_n[:, :] = np.sin(4*np.pi*X/L_y) + np.sin(4*np.pi*Y/L_y)
-    #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
-    output = np.random.rand(2)
-    eta_n = np.exp(-((X+L_x/2-output[0]*L_x)**2/(2*(0.05E+6)**2) + (Y+L_y/2-output[1]*L_y)**2/(2*(0.05E+6)**2)))
-    #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
-    #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
-    #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
-    #eta_n[:, :] = 0.0
+        #viz_tools.surface_plot3D(X, Y, eta_n, (X.min(), X.max()), (Y.min(), Y.max()), (eta_n.min(), eta_n.max()))
 
-    #viz_tools.surface_plot3D(X, Y, eta_n, (X.min(), X.max()), (Y.min(), Y.max()), (eta_n.min(), eta_n.max()))
+        # Sampling variables.
+        eta_list = list(); u_list = list(); v_list = list()         # Lists to contain eta and u,v for animation
+        hm_sample = list(); ts_sample = list(); t_sample = list()   # Lists for Hovmuller and time series
+        hm_sample.append(eta_n[:, int(N_y/2)])                      # Sample initial eta in middle of domain
+        ts_sample.append(eta_n[int(N_x/2), int(N_y/2)])             # Sample initial eta at center of domain
+        t_sample.append(0.0)                                        # Add initial time to t-samples
+        anim_interval = 20                                         # How often to sample for time series
+        sample_interval = 1000                                      # How often to sample for time series
+        # =============== Done with setting up arrays and initial conditions ===============
 
-    # Sampling variables.
-    eta_list = list(); u_list = list(); v_list = list()         # Lists to contain eta and u,v for animation
-    hm_sample = list(); ts_sample = list(); t_sample = list()   # Lists for Hovmuller and time series
-    hm_sample.append(eta_n[:, int(N_y/2)])                      # Sample initial eta in middle of domain
-    ts_sample.append(eta_n[int(N_x/2), int(N_y/2)])             # Sample initial eta at center of domain
-    t_sample.append(0.0)                                        # Add initial time to t-samples
-    anim_interval = 20                                         # How often to sample for time series
-    sample_interval = 1000                                      # How often to sample for time series
-    # =============== Done with setting up arrays and initial conditions ===============
+        t_0 = time.perf_counter()  # For timing the computation loop
 
-    t_0 = time.perf_counter()  # For timing the computation loop
+        # ==================================================================================
+        # ========================= Main time loop for simulation ==========================
+        # ==================================================================================
+        while (time_step < max_time_step):
+            # ------------ Computing values for u and v at next time step --------------
+            u_np1[:-1, :] = u_n[:-1, :] - g*dt/dx*(eta_n[1:, :] - eta_n[:-1, :])
+            v_np1[:, :-1] = v_n[:, :-1] - g*dt/dy*(eta_n[:, 1:] - eta_n[:, :-1])
 
-    # ==================================================================================
-    # ========================= Main time loop for simulation ==========================
-    # ==================================================================================
-    while (time_step < max_time_step):
-        # ------------ Computing values for u and v at next time step --------------
-        u_np1[:-1, :] = u_n[:-1, :] - g*dt/dx*(eta_n[1:, :] - eta_n[:-1, :])
-        v_np1[:, :-1] = v_n[:, :-1] - g*dt/dy*(eta_n[:, 1:] - eta_n[:, :-1])
+            # Add friction if enabled.
+            if (use_friction is True):
+                u_np1[:-1, :] -= dt*kappa[:-1, :]*u_n[:-1, :]
+                v_np1[:-1, :] -= dt*kappa[:-1, :]*v_n[:-1, :]
 
-        # Add friction if enabled.
-        if (use_friction is True):
-            u_np1[:-1, :] -= dt*kappa[:-1, :]*u_n[:-1, :]
-            v_np1[:-1, :] -= dt*kappa[:-1, :]*v_n[:-1, :]
+            # Add wind stress if enabled.
+            if (use_wind is True):
+                u_np1[:-1, :] += dt*tau_x[:]/(rho_0*H)
+                v_np1[:-1, :] += dt*tau_y[:]/(rho_0*H)
 
-        # Add wind stress if enabled.
-        if (use_wind is True):
-            u_np1[:-1, :] += dt*tau_x[:]/(rho_0*H)
-            v_np1[:-1, :] += dt*tau_y[:]/(rho_0*H)
+            # Use a corrector method to add coriolis if it's enabled.
+            if (use_coriolis is True):
+                u_np1[:, :] = (u_np1[:, :] - beta_c*u_n[:, :] + alpha*v_n[:, :])/(1 + beta_c)
+                v_np1[:, :] = (v_np1[:, :] - beta_c*v_n[:, :] - alpha*u_n[:, :])/(1 + beta_c)
+            
+            v_np1[:, -1] = 0.0      # Northern boundary condition
+            u_np1[-1, :] = 0.0      # Eastern boundary condition
+            # -------------------------- Done with u and v -----------------------------
 
-        # Use a corrector method to add coriolis if it's enabled.
-        if (use_coriolis is True):
-            u_np1[:, :] = (u_np1[:, :] - beta_c*u_n[:, :] + alpha*v_n[:, :])/(1 + beta_c)
-            v_np1[:, :] = (v_np1[:, :] - beta_c*v_n[:, :] - alpha*u_n[:, :])/(1 + beta_c)
-        
-        v_np1[:, -1] = 0.0      # Northern boundary condition
-        u_np1[-1, :] = 0.0      # Eastern boundary condition
-        # -------------------------- Done with u and v -----------------------------
+            # --- Computing arrays needed for the upwind scheme in the eta equation.----
+            h_e[:-1, :] = np.where(u_np1[:-1, :] > 0, eta_n[:-1, :] + H, eta_n[1:, :] + H)
+            h_e[-1, :] = eta_n[-1, :] + H
 
-        # --- Computing arrays needed for the upwind scheme in the eta equation.----
-        h_e[:-1, :] = np.where(u_np1[:-1, :] > 0, eta_n[:-1, :] + H, eta_n[1:, :] + H)
-        h_e[-1, :] = eta_n[-1, :] + H
+            h_w[0, :] = eta_n[0, :] + H
+            h_w[1:, :] = np.where(u_np1[:-1, :] > 0, eta_n[:-1, :] + H, eta_n[1:, :] + H)
 
-        h_w[0, :] = eta_n[0, :] + H
-        h_w[1:, :] = np.where(u_np1[:-1, :] > 0, eta_n[:-1, :] + H, eta_n[1:, :] + H)
+            h_n[:, :-1] = np.where(v_np1[:, :-1] > 0, eta_n[:, :-1] + H, eta_n[:, 1:] + H)
+            h_n[:, -1] = eta_n[:, -1] + H
 
-        h_n[:, :-1] = np.where(v_np1[:, :-1] > 0, eta_n[:, :-1] + H, eta_n[:, 1:] + H)
-        h_n[:, -1] = eta_n[:, -1] + H
+            h_s[:, 0] = eta_n[:, 0] + H
+            h_s[:, 1:] = np.where(v_np1[:, :-1] > 0, eta_n[:, :-1] + H, eta_n[:, 1:] + H)
 
-        h_s[:, 0] = eta_n[:, 0] + H
-        h_s[:, 1:] = np.where(v_np1[:, :-1] > 0, eta_n[:, :-1] + H, eta_n[:, 1:] + H)
+            uhwe[0, :] = u_np1[0, :]*h_e[0, :]
+            uhwe[1:, :] = u_np1[1:, :]*h_e[1:, :] - u_np1[:-1, :]*h_w[1:, :]
 
-        uhwe[0, :] = u_np1[0, :]*h_e[0, :]
-        uhwe[1:, :] = u_np1[1:, :]*h_e[1:, :] - u_np1[:-1, :]*h_w[1:, :]
+            vhns[:, 0] = v_np1[:, 0]*h_n[:, 0]
+            vhns[:, 1:] = v_np1[:, 1:]*h_n[:, 1:] - v_np1[:, :-1]*h_s[:, 1:]
+            # ------------------------- Upwind computations done -------------------------
 
-        vhns[:, 0] = v_np1[:, 0]*h_n[:, 0]
-        vhns[:, 1:] = v_np1[:, 1:]*h_n[:, 1:] - v_np1[:, :-1]*h_s[:, 1:]
-        # ------------------------- Upwind computations done -------------------------
+            # ----------------- Computing eta values at next time step -------------------
+            eta_np1[:, :] = eta_n[:, :] - dt*(uhwe[:, :]/dx + vhns[:, :]/dy)    # Without source/sink
 
-        # ----------------- Computing eta values at next time step -------------------
-        eta_np1[:, :] = eta_n[:, :] - dt*(uhwe[:, :]/dx + vhns[:, :]/dy)    # Without source/sink
+            # Add source term if enabled.
+            if (use_source is True):
+                eta_np1[:, :] += dt*sigma
 
-        # Add source term if enabled.
-        if (use_source is True):
-            eta_np1[:, :] += dt*sigma
+            # Add sink term if enabled.
+            if (use_sink is True):
+                eta_np1[:, :] -= dt*w
+            # ----------------------------- Done with eta --------------------------------
 
-        # Add sink term if enabled.
-        if (use_sink is True):
-            eta_np1[:, :] -= dt*w
-        # ----------------------------- Done with eta --------------------------------
+            u_n = np.copy(u_np1)        # Update u for next iteration
+            v_n = np.copy(v_np1)        # Update v for next iteration
+            eta_n = np.copy(eta_np1)    # Update eta for next iteration
 
-        u_n = np.copy(u_np1)        # Update u for next iteration
-        v_n = np.copy(v_np1)        # Update v for next iteration
-        eta_n = np.copy(eta_np1)    # Update eta for next iteration
+            time_step += 1
 
-        time_step += 1
+            # Samples for Hovmuller diagram and spectrum every sample_interval time step.
+            if (random.random() < 0.01 or time_step == 1):
+                x_data.append(np.stack([u_n, v_n, eta_n], axis = 0))
+                t_data.append(time_step*dt)
+                y_data.append(output)
 
-        # Samples for Hovmuller diagram and spectrum every sample_interval time step.
-        if (random.random() < 0.01 or time_step == 1):
-            x_data.append(np.stack([u_n, v_n, eta_n], axis = 0))
-            t_data.append(time_step*dt)
-            y_data.append(output)
-
-x_final = np.stack(x_data, axis = 0)
-t_final = np.stack(t_data, axis = 0)
-y_final = np.stack(y_data, axis = 0)
-print(x_final.shape)
-np.save("x_data.npy", x_final, allow_pickle=True)
-np.save("y_data.npy", y_final, allow_pickle=True)
-np.save("t_data.npy", t_final, allow_pickle=True)
+    x_final = np.stack(x_data, axis = 0)
+    t_final = np.stack(t_data, axis = 0)
+    y_final = np.stack(y_data, axis = 0)
+    print(x_final.shape)
+    np.save(f"x_data_{currnum}.npy", x_final, allow_pickle=True)
+    np.save(f"y_data_{currnum}.npy", y_final, allow_pickle=True)
+    np.save(f"t_data_{currnum}.npy", t_final, allow_pickle=True)
     # # Store eta and (u, v) every anin_interval time step for animations.
     # if (time_step % anim_interval == 0):
     #     u_list.append(u_n)

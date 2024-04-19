@@ -112,21 +112,21 @@ class VAE(nn.Module):
         z = self.reparameterization(mean, logvar)
         x_hat = self.decode((z, t))
         return x_hat, mean, logvar
-    
+
 class ConvDownSample(nn.Module):
     def __init__(self, input_shape=150, hidden_dim=4, output_dim=100):
         super(ConvDownSample, self).__init__()
         self.hidden_dim = hidden_dim
-        self.input_shape = input_shape
-        self.conv1_1 = nn.Conv2d(3, hidden_dim, kernel_size = 5, padding = "same")
-        self.conv2_1 = nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size = 5, stride = 5)
+        self.input_shape = input_shape #150x150x3
+        self.conv1_1 = nn.Conv2d(3, hidden_dim, kernel_size = 5, padding = "same") #150x150x4, 5x5x3x4
+        self.conv2_1 = nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size = 5, stride = 5, padding = 2) #30x30x8, 5x5x4x8
         self.lrelu = nn.LeakyReLU(0.2)
-        self.conv1_2 = nn.Conv2d(hidden_dim*2, hidden_dim*2, kernel_size = 3, padding = "same")
-        self.conv2_2 = nn.Conv2d(hidden_dim*2, hidden_dim * 4, kernel_size = 3, stride = 3)
-        self.conv1_3 = nn.Conv2d(hidden_dim*4, hidden_dim*4, kernel_size = 3, padding = "same")
-        self.conv2_3 = nn.Conv2d(hidden_dim*4, hidden_dim * 8, kernel_size = 3, stride = 2)
-        self.conv1_4 = nn.Conv2d(hidden_dim*8, hidden_dim*8, kernel_size = 3, padding = "same")
-        self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
+        self.conv1_2 = nn.Conv2d(hidden_dim*2, hidden_dim*2, kernel_size = 3, padding = "same") #30x30x8 - residual
+        self.conv2_2 = nn.Conv2d(hidden_dim*2, hidden_dim * 4, kernel_size = 3, stride = 3, padding = 1) #10x10x16
+        self.conv1_3 = nn.Conv2d(hidden_dim*4, hidden_dim*4, kernel_size = 3, padding = "same") #10x10x16 - residual
+        self.conv2_3 = nn.Conv2d(hidden_dim*4, hidden_dim * 8, kernel_size = 3, stride = 2, padding = 1) #5x5x32
+        self.conv1_4 = nn.Conv2d(hidden_dim*8, hidden_dim*8, kernel_size = 3, padding = "same")# 5x5x32 - residual 3x3x32x32
+        self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same") #5x5x4
 
     def forward(self, input):
         x, t = input
@@ -280,11 +280,12 @@ param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 N_x = 150                            # Number of grid points in x-direction
 N_y = 150                            # Number of grid points in y-direction
 
-model = VAE(150*150*3, 3*150*150//25, 784, 128).to(device)
-temp_model = torch.load("model_rom.ckpt")
-model.load_state_dict(temp_model.state_dict())
-cnn_model = CNN_VAE(150, 0, 4, 16).to(device)
-temp_model = torch.load("model_cnn.ckpt")
+# model = VAE(150*150*3, 3*150*150//25, 784, 100).to(device)
+# temp_model = torch.load("model_rom.ckpt")
+# model.load_state_dict(temp_model.state_dict())
+latent_channels = 4
+cnn_model = CNN_VAE(150, 0, 4, latent_channels).to(device)
+temp_model = torch.load("./results/model_cnn_100.ckpt")
 cnn_model.load_state_dict(temp_model.state_dict())
 
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
@@ -490,7 +491,7 @@ while (time_step < max_time_step):
 
 # # ==================Perturbed==================================================#
 
-
+rmse_list_perturbed = []
 # ==================================================================================
 # ==================== Allocating arrays and initial conditions ====================
 # ==================================================================================
@@ -621,11 +622,12 @@ while (time_step < max_time_step):
         rmse_temp = np.sqrt(np.mean((eta_n - eta_list[time_step // anim_interval - 1])**2))
         print("RMSE")
         print(rmse_temp)
+        rmse_list_perturbed.append(rmse_temp)
 
-
+# np.save("perturbed_rmse.npy", np.array(rmse_list_perturbed), allow_pickle = True)
 # ======================EnKF=====================================================================================
 ensemble_size = 200
-
+rmse_list_cnn = []
 # Useful linear algebra: compute B/A
 import numpy.linalg as nla
 
@@ -635,7 +637,7 @@ xDim = N_x * N_y
 import numpy.linalg as nla
 
 xDim = N_x * N_y
-latent_dim = 128
+latent_dim = 25*latent_channels
 obs_sigma =  0.005
 R12 = obs_sigma*np.eye((latent_dim))
 R = R12 @ R12.T
@@ -790,17 +792,17 @@ while (time_step < 0):
     time_step += 1
     
     if (time_step % anim_interval == 0):
-        scaling = 1.5
+        scaling = 5
         with torch.no_grad():
-            target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).view(1, -1).to(device)
-            target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).view(u_n.shape[0], -1).to(device)
+            target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).to(device)
+            target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).to(device)
             t_rep = torch.Tensor([time_step*dt/21/5000]*target.shape[0]).to(device)
-            x_hat_current, mean_current, log_var_current = model((target, t_rep))
-            x_hat, mean, log_var = model((target_true, t_rep))
+            x_hat_current, mean_current, log_var_current = cnn_model((target, t_rep))
+            x_hat, mean, log_var = cnn_model((target_true, t_rep))
             t_rep = torch.Tensor([time_step*dt]*target.shape[0]).to(device).unsqueeze(1)
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target_true[:, ::25], t_rep))
-            latent = model.decode((torch.Tensor(my_EnKF(mean_current.detach().cpu().numpy().T, mean.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, -1), t_rep)).reshape(ensemble_size, 3, 150, 150).detach().cpu().numpy()
-            eta_n = latent[:, 2, :, :]
+            x_hat_sample, mean_sample, log_var_sample = cnn_model.forward_sample((target_true[:, :, ::30, ::30], t_rep))
+            latent = cnn_model.decode((torch.Tensor(my_EnKF(mean_current.view(mean_current.shape[0], -1).detach().cpu().numpy().T, mean.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, latent_channels, 5, 5), t_rep)).detach().cpu().numpy()
+            eta_n = latent[:, 2 , :, :]
             u_n = latent[:, 0, :, :]
             v_n = latent[:, 1, :, :]
     # Samples for Hovmuller diagram and spectrum every sample_interval time step.
@@ -820,6 +822,10 @@ while (time_step < 0):
         rmse_temp = np.sqrt(np.mean((np.mean(eta_n, axis = 0) - eta_list[time_step // anim_interval - 1])**2))
         print("RMSE")
         print(rmse_temp)
+        rmse_list_cnn.append(rmse_temp)
+
+np.save("cnn_full_50latent_RMSE.npy", np.array(rmse_list_cnn), allow_pickle = True)
+
 
 # Don't use numpy's mean, cov, but rather a `for` loop.
 def estimate_mean_and_cov(E):
@@ -840,10 +846,8 @@ def estimate_mean_and_cov(E):
 # ======================EnSF=====================================================================================
 ensemble_size = 64
 eps_alpha = 0.05
-obs_sigma =  0.5
-def Obs(E):
-    return E
-# compact version
+obs_sigma =  0.05
+anim_interval = 20
 def cond_alpha(t):
     # conditional information
     # alpha_t(0) = 1
@@ -856,10 +860,8 @@ def cond_sigma_sq(t):
     # sigma2_t(0) = 0
     # sigma2_t(1) = 1
     # sigma(t) = t
-    return t    
-# damping function(tau(0) = 1;  tau(1) = 0;)
-def g_tau(t):
-    return 1-t
+    return t
+
 # drift function of forward SDE
 def f_func(t):
     # f=d_(log_alpha)/dt
@@ -876,6 +878,8 @@ def g_sq(t):
 
 def g_func(t):
     return np.sqrt(g_sq(t))
+def g_tau(t):
+    return 1-t
 
 # generate sample with reverse SDE
 def reverse_SDE(x0, score_likelihood=None, time_steps=100,
@@ -887,12 +891,12 @@ def reverse_SDE(x0, score_likelihood=None, time_steps=100,
     # N1 = x_T.shape[0]
     # N2 = x0.shape[0]
     # d = x_T.shape[1]
-    x0 = x0.to(device)
+
     # Generate the time mesh
     dt = 1.0/time_steps
 
     # Initialization
-    xt = torch.randn(ensemble_size, latent_dim, device=device)
+    xt = torch.randn(ensemble_size, x0.shape[1], device=device)
     t = 1.0
 
     # define storage
@@ -960,7 +964,7 @@ h_n = np.zeros((ensemble_size, N_x, N_y))
 h_s = np.zeros((ensemble_size, N_x, N_y))
 uhwe = np.zeros((ensemble_size, N_x, N_y))
 vhns = np.zeros((ensemble_size, N_x, N_y))
-
+rmse_list_cnn_ensf = []
 # Initial conditions for u and v.
 u_n[:, :, :] = 0.0             # Initial condition for u
 v_n[:, :, :] = 0.0             # Initial condition for u
@@ -988,7 +992,7 @@ ts_sample.append(np.mean(eta_n, axis = 0)[int(N_x/2), int(N_y/2)])             #
 t_sample.append(0.0)                                        # Add initial time to t-samples
 sample_interval = 1000                                      # How often to sample for time series
 # =============== Done with setting up arrays and initial conditions ===============
-
+scaling = 1
 t_0 = time.perf_counter()  # For timing the computation loop
 
 # ==================================================================================
@@ -1057,35 +1061,45 @@ while (time_step < max_time_step):
     euler_steps = 100
     # define likelihood score
     if (time_step % anim_interval == 0):
+        # with torch.no_grad():
+        #     target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).to(device)
+        #     target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).to(device)
+        #     t_rep = torch.Tensor([time_step*dt/21/5000]*target.shape[0]).to(device)
+        #     x_hat_current, mean_current, log_var_current = cnn_model((target, t_rep))
+        #     x_hat, mean, log_var = cnn_model((target_true, t_rep))
+        #     t_rep = torch.Tensor([time_step*dt]*target.shape[0]).to(device).unsqueeze(1)
+        #     x_hat_sample, mean_sample, log_var_sample = cnn_model.forward_sample((target_true[:, :, ::30, ::30], t_rep))
+        #     obs = torch.atan(mean.view(-1)*scaling)+ torch.randn_like(mean.view(-1))*obs_sigma
+        # def score_likelihood(xt, t):
+        #     # obs: (d)
+        #     # xt: (ensemble, d)
+        #     # the line below is analytical ∇z log P(Yt+1|z)
+        #     score_x = -(torch.atan(xt) - obs)/obs_sigma**2 * (1./(1. + xt**2))
+        #     tau = g_tau(t)
+        #     return tau*score_x
+        # mean_current = reverse_SDE(x0=mean_current.view(mean_current.shape[0], -1)*scaling, score_likelihood=score_likelihood, time_steps=euler_steps)
+        # with torch.no_grad():
+        #     latent = cnn_model.decode((mean_current.view(mean_current.shape[0], latent_channels, 5, 5)/scaling, t_rep)).detach().cpu().numpy()
+        # eta_n = latent[:, 2, :, :]
+        # u_n = latent[:, 0, :, :]
+        # v_n = latent[:, 1, :, :]
         with torch.no_grad():
-            # obs = torch.Tensor(np.arctan(eta_list[time_step // anim_interval - 2]) + obs_sigma *  rnd.randn(N_x, N_y)).to(device)[:, ::10]
-            target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).view(1, -1).to(device)
-            target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).view(u_n.shape[0], -1).to(device)
-            t_rep = torch.Tensor([time_step*dt/21/5000]*target.shape[0]).to(device)
-            x_hat_current, mean_current, log_var_current = model((target, t_rep))
-            x_hat, mean, log_var = model((target_true, t_rep))
-            t_rep = torch.Tensor([time_step*dt]*target.shape[0]).to(device).unsqueeze(1)
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target_true[:, ::25], t_rep))
-            obs = torch.atan(mean_sample)
+            target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).to(device)
+            target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 1)).to(device)
+            obs = torch.atan(target_true.view(-1)*scaling)+ torch.randn_like(target_true.view(-1))*obs_sigma
         def score_likelihood(xt, t):
             # obs: (d)
             # xt: (ensemble, d)
             # the line below is analytical ∇z log P(Yt+1|z)
             score_x = -(torch.atan(xt) - obs)/obs_sigma**2 * (1./(1. + xt**2))
-            # print(score_x)
-            #xt_tensor = torch.autograd.Variable(xt, requires_grad = True)
-            #xt_tensor.grad = None
-            #logprob = -torch.sum(torch.square(xt_tensor - obs)/obs_sigma**2/2)
-            #logprob.backward()
-            #score_x = xt_tensor.grad
             tau = g_tau(t)
             return tau*score_x
-        mean_current = reverse_SDE(x0=mean_current, score_likelihood=score_likelihood, time_steps=euler_steps)
+        mean_current = reverse_SDE(x0=target.view(target.shape[0], -1)*scaling, score_likelihood=score_likelihood, time_steps=euler_steps)
         with torch.no_grad():
-            latent = model.decode((mean_current, t_rep)).view(ensemble_size, 3, 150, 150).detach().cpu().numpy()
-        eta_n = latent[:, 2, :, :]
-        u_n = latent[:, 0, :, :]
-        v_n = latent[:, 1, :, :]
+            mean_current = (mean_current.view(mean_current.shape[0], 3, 150, 150)/scaling).detach().cpu().numpy()
+        eta_n = mean_current[:, 2, :, :]
+        u_n = mean_current[:, 0, :, :]
+        v_n = mean_current[:, 1, :, :]
     # Samples for Hovmuller diagram and spectrum every sample_interval time step.
     if (time_step % sample_interval == 0):
         hm_sample.append(np.mean(eta_n, axis = 0)[:, int(N_y/2)])              # Sample middle of domain for Hovmuller
@@ -1103,6 +1117,9 @@ while (time_step < max_time_step):
         rmse_temp = np.sqrt(np.mean((np.mean(eta_n, axis = 0) - eta_list[time_step // anim_interval - 1])**2))
         print("RMSE")
         print(rmse_temp)
+        rmse_list_cnn_ensf.append(rmse_temp)
+
+np.save("cnn_full_ensf_RMSE.npy", np.array(rmse_list_cnn), allow_pickle = True)
 
 
 # ============================= Main time loop done ================================
@@ -1116,7 +1133,7 @@ print("\nVisualizing results...")
 #viz_tools.quiver_plot(X, Y, u_n, v_n, "Final state of velocity field $\mathbf{u}(x,y)$")
 #viz_tools.hovmuller_plot(x, t_sample, hm_sample)
 #viz_tools.plot_time_series_and_ft(t_sample, ts_sample)
-eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list_ensf, anim_interval*dt, "eta")
+eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_ensf, eta_list, anim_interval*dt, "eta")
 #eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, "eta_surface")
 #quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, "velocity")
 # ============================ Done with visualization =============================

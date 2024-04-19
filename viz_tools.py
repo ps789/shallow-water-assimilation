@@ -53,9 +53,9 @@ def eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list_en
     def update_eta(num):
         ax[0][0].set_title("$\eta$".format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        ax[0][1].set_title("VAE".format(
+        ax[0][1].set_title("Reconstruction".format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        ax[1][0].set_title("VAE subsample observations".format(
+        ax[1][0].set_title("Placeholder".format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
         ax[1][1].set_title("Placeholder".format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
