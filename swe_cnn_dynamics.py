@@ -31,24 +31,23 @@ import torch
 import torch.nn as nn
 torch.set_default_dtype(torch.float16) # half precision
 device = 'cuda'
-
 class ConvDownSample(nn.Module):
     def __init__(self, input_shape=150, hidden_dim=4, output_dim=100):
         super(ConvDownSample, self).__init__()
         self.hidden_dim = hidden_dim
         self.input_shape = input_shape
         self.conv1_1 = nn.Conv2d(3, hidden_dim, kernel_size = 5, padding = "same")
-        self.conv2_1 = nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size = 5, stride = 5)
+        self.conv2_1 = nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size = 5, stride = 5, padding = 2)
         self.lrelu = nn.LeakyReLU(0.2)
         self.conv1_2 = nn.Conv2d(hidden_dim*2, hidden_dim*2, kernel_size = 3, padding = "same")
-        self.conv2_2 = nn.Conv2d(hidden_dim*2, hidden_dim * 4, kernel_size = 3, stride = 3)
+        self.conv2_2 = nn.Conv2d(hidden_dim*2, hidden_dim * 4, kernel_size = 3, stride = 3, padding = 1)
         self.conv1_3 = nn.Conv2d(hidden_dim*4, hidden_dim*4, kernel_size = 3, padding = "same")
-        self.conv2_3 = nn.Conv2d(hidden_dim*4, hidden_dim * 8, kernel_size = 3, stride = 2)
+        self.conv2_3 = nn.Conv2d(hidden_dim*4, hidden_dim * 8, kernel_size = 3, stride = 2, padding = 1)
         self.conv1_4 = nn.Conv2d(hidden_dim*8, hidden_dim*8, kernel_size = 3, padding = "same")
         self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = self.lrelu(self.conv2_1(x))
@@ -76,7 +75,7 @@ class ConvLayer(nn.Module):
         self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = self.lrelu(self.conv2_1(x))
@@ -104,7 +103,7 @@ class ConvUpSample(nn.Module):
         self.conv2_4 = nn.Conv2d(hidden_dim, 3, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = x+self.lrelu(self.conv2_1(x))
@@ -131,15 +130,25 @@ class VAE(nn.Module):
     
         # decoder
         self.decoder = ConvUpSample(input_shape, hidden_dim, latent_dim)
+        
+        self.lstm = nn.LSTM(input_size=5*5*latent_dim*2, hidden_size=256, num_layers=4, batch_first=True)
+        self.linear = nn.Linear(256, 5*5*latent_dim*2)
      
     def encode(self, x):
         x = self.encoder(x)
-        mean = x[:, :self.latent_dim, :, :]
-        logvar = x[:, self.latent_dim:, :, :]
-        return mean, logvar
+        return x
     
     def encode_sample(self, x):
         x = self.encoder_sample(x)
+        return x
+    
+    def forward_latent(self, mean_logvar):
+        mean_logvar_sequence = mean_logvar.reshape((mean_logvar.shape[0], mean_logvar.shape[1], -1))
+        x, (h, c) = self.lstm(mean_logvar_sequence)
+        x = self.linear(x.reshape(-1, 256)).reshape(mean_logvar.shape)
+        return x
+    
+    def split(self, x):
         mean = x[:, :self.latent_dim, :, :]
         logvar = x[:, self.latent_dim:, :, :]
         return mean, logvar
@@ -153,17 +162,26 @@ class VAE(nn.Module):
         return self.decoder(x)
 
     def forward(self, input):
-        _, t = input
-        mean, logvar = self.encode(input)
+        input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        mean_logvar = self.encode(input_reshaped)
+        mean_logvar_sequence = mean_logvar.reshape((input.shape[0], input.shape[1], -1))
+        lstm_out, (h, c) = self.lstm(mean_logvar_sequence)
+        mean_logvar_sequence = self.linear(lstm_out.reshape(-1, 256)).reshape(mean_logvar_sequence.shape)
+        mean, logvar = self.split(mean_logvar)
+        mean_sequence, logvar_sequence = self.split(mean_logvar_sequence.reshape((input.shape[0]* input.shape[1], self.latent_dim*2, 5, 5)))
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode((z, t))
-        return x_hat, mean, logvar
+        z_sequence = self.reparameterization(mean_sequence, logvar_sequence)
+        x_hat = self.decode(z).view((input.shape[0], input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        x_hat_sequence = self.decode(z_sequence).view((input.shape[0], input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        return x_hat, mean.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), x_hat_sequence, mean_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5))
+    
     def forward_sample(self, input):
-        _, t = input
-        mean, logvar = self.encode_sample(input)
+        input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        mean, logvar = self.encode_sample(input_reshaped)
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode((z, t))
+        x_hat = self.decode(z)
         return x_hat, mean, logvar
+
 
 mseloss = torch.nn.MSELoss(reduction='mean')
 def loss_function(x, x_hat, mean, log_var):
@@ -200,8 +218,8 @@ N_x = 150                            # Number of grid points in x-direction
 N_y = 150                            # Number of grid points in y-direction
 
 
-model = VAE(150, 0, 4, 8).to(device)
-temp_model = torch.load("model_cnn_128.ckpt")
+model = VAE(150, 0, 4, 4).to(device)
+temp_model = torch.load("model_cnn_dynamics_simple_199.ckpt")
 model.load_state_dict(temp_model.state_dict())
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
 dy = L_y/(N_y - 1)                   # Grid spacing in y-direction
@@ -305,16 +323,16 @@ v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
 #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
 # eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
 
-#output = np.random.rand(2)
-output = np.array([0.5, 0.5])
+output = np.array([0.5, 0.5])#np.random.rand(2)
 eta_n = np.exp(-((X+L_x/2-output[0]*L_x)**2/(2*(0.05E+6)**2) + (Y+L_y/2-output[1]*L_y)**2/(2*(0.05E+6)**2)))
+state = torch.zeros(size = (1, 19, 8, 5, 5)).to(device)
 #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
 #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
 #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
 #eta_n[:, :] = 0.0
 
 #viz_tools.surface_plot3D(X, Y, eta_n, (X.min(), X.max()), (Y.min(), Y.max()), (eta_n.min(), eta_n.max()))
-
+rmse_list = []
 # Sampling variables.
 eta_list = list(); u_list = list(); v_list = list()         # Lists to contain eta and u,v for animation
 eta_list_decoded = list(); u_list_decoded = list(); v_list_decoded = list()         # Lists to contain eta and u,v for animation
@@ -327,8 +345,7 @@ sample_interval = 1000                                      # How often to sampl
 # =============== Done with setting up arrays and initial conditions ===============
 
 t_0 = time.perf_counter()  # For timing the computation loop
-rmse_list = []
-rmse_list_sample = []
+offset = False
 # ==================================================================================
 # ========================= Main time loop for simulation ==========================
 # ==================================================================================
@@ -404,44 +421,57 @@ while (time_step < max_time_step):
         print("Time: \t{:.2f} hours".format(time_step*dt/3600))
         print("Step: \t{} / {}".format(time_step, max_time_step))
         print("Mass: \t{}\n".format(np.sum(eta_n)))
+        print(u_n.shape)
         u_list.append(u_n)
         v_list.append(v_n)
         eta_list.append(eta_n)
-
-    # Store eta and (u, v) every anin_interval time step for animations.
-    if (time_step % anim_interval == 0):
-        target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).to(device)
-        t_rep = torch.Tensor([time_step*dt/21/5000]*target.shape[0]).to(device)
-        x_hat, mean, log_var = model((target, t_rep))
-        x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, :, ::30, ::30], t_rep))
-        u_n_decoded, v_n_decoded, eta_n_decoded = x_hat[0].view(3, 150, 150)[0].detach().cpu().numpy(), x_hat.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat.view(3, 150, 150)[2].detach().cpu().numpy()
-        u_n_decoded_sparse, v_n_decoded_sparse, eta_n_decoded_sparse = x_hat_sample.view(3, 150, 150)[0].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[1].detach().cpu().numpy(), x_hat_sample.view(3, 150, 150)[2].detach().cpu().numpy()
-
-        print("Time: \t{:.2f} hours".format(time_step*dt/3600))
-        print("Step: \t{} / {}".format(time_step, max_time_step))
-        print("Mass: \t{}\n".format(np.sum(eta_n)))
-        u_list_decoded.append(u_n_decoded)
-        v_list_decoded.append(v_n_decoded)
-        eta_list_decoded.append(eta_n_decoded)
-        rmse = np.sqrt(np.mean((eta_n - eta_n_decoded)**2))
-        print(f"RMSE:  {rmse}" )
-        rmse_list.append(rmse)
-        rmse = np.sqrt(np.mean((eta_n - eta_n_decoded_sparse)**2))
-        print(f"RMSE Sample:  {rmse}" )
-        rmse_list_sample.append(rmse)
-
-    # Store eta and (u, v) every anin_interval time step for animations.
-    if (time_step % anim_interval == 0):
-        print("Time: \t{:.2f} hours".format(time_step*dt/3600))
-        print("Step: \t{} / {}".format(time_step, max_time_step))
-        print("Mass: \t{}\n".format(np.sum(eta_n)))
-        u_list_decoded_sparse.append(u_n_decoded_sparse)
-        v_list_decoded_sparse.append(v_n_decoded_sparse)
-        eta_list_decoded_sparse.append(eta_n_decoded_sparse)
     
+    with torch.no_grad():
+        if time_step <= 5000:
+            state = torch.roll(state, shifts = -1, dims = 1)
+            target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).to(device)
+            mean_logvar = model.encode(target)
+            state[:, -1, :, :, :] = mean_logvar
+        else:
+            state_predict = model.forward_latent(state)[:, -1, :, :, :]
+            state = torch.roll(state, shifts = -1, dims = 1)
+            state[:, -1, :, :, :] = state_predict
 
-np.save("cnn_rmse_decoded.npy", np.array(rmse_list), allow_pickle = True)
-np.save("cnn_rmse_decoded_sample.npy", np.array(rmse_list_sample), allow_pickle = True)
+
+        # Store eta and (u, v) every anin_interval time step for animations.
+        if (time_step % anim_interval == 0):
+            decoded = model.decode(state[:, -1, :4, :, :]).detach().cpu().numpy()
+            u_n_decoded, v_n_decoded, eta_n_decoded = decoded[0, 0, :, :], decoded[0, 1, :, :], decoded[0, 2, :, :]
+            # u_n_decoded_sparse, v_n_decoded_sparse, eta_n_decoded_sparse = 
+
+            print("Time: \t{:.2f} hours".format(time_step*dt/3600))
+            print("Step: \t{} / {}".format(time_step, max_time_step))
+            print("Mass: \t{}\n".format(np.sum(eta_n)))
+            u_list_decoded.append(u_n_decoded)
+            v_list_decoded.append(v_n_decoded)
+            eta_list_decoded.append(eta_n_decoded)
+            rmse = np.sqrt(np.mean((eta_n - eta_n_decoded)**2))
+            print(f"RMSE:  {rmse}" )
+            rmse_list.append(rmse)
+    # with torch.no_grad():
+    #     target = torch.Tensor(np.stack([u_n, v_n, eta_n], axis = 0)).unsqueeze(0).to(device)
+    #     mean_logvar = model.encode(target)
+    #     if offset:
+    #         state[:, -2, :, :, :] = mean_logvar_prev
+    #     mean_logvar_prev = mean_logvar
+    #     offset = True
+
+    # Store eta and (u, v) every anin_interval time step for animations.
+    if (time_step % anim_interval == 0):
+        print("Time: \t{:.2f} hours".format(time_step*dt/3600))
+        print("Step: \t{} / {}".format(time_step, max_time_step))
+        print("Mass: \t{}\n".format(np.sum(eta_n)))
+        # u_list_decoded_sparse.append(u_n_decoded_sparse)
+        # v_list_decoded_sparse.append(v_n_decoded_sparse)
+        # eta_list_decoded_sparse.append(eta_n_decoded_sparse)
+    
+np.save("cnn_dynamics_rmse_decoded.npy", np.array(rmse_list), allow_pickle = True)
+
 
 # ============================= Main time loop done ================================
 print("Main computation loop done!\nExecution time: {:.2f} s".format(time.perf_counter() - t_0))
@@ -454,7 +484,7 @@ print("\nVisualizing results...")
 #viz_tools.quiver_plot(X, Y, u_n, v_n, "Final state of velocity field $\mathbf{u}(x,y)$")
 #viz_tools.hovmuller_plot(x, t_sample, hm_sample)
 #viz_tools.plot_time_series_and_ft(t_sample, ts_sample)
-eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_decoded, eta_list_decoded_sparse, eta_list_decoded, anim_interval*dt, "eta")
+eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_decoded, eta_list, eta_list, anim_interval*dt, "eta")
 #eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, "eta_surface")
 #quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, "velocity")
 # ============================ Done with visualization =============================

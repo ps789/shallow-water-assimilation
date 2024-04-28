@@ -5,10 +5,8 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
 import time
-data_x = np.load("x_data.npy", allow_pickle = True)
-data_y = np.load("y_data.npy", allow_pickle = True)
-data_t = np.load("t_data.npy", allow_pickle = True)[:, np.newaxis]
-data_t = data_t/np.max(data_t)
+data_x = np.load("./sequential_data/x_data_sequential.npy", allow_pickle = True)
+# data_x = np.load("./sequential_data/x_data_sequential_40.npy", allow_pickle = True)
 
 class ConvDownSample(nn.Module):
     def __init__(self, input_shape=150, hidden_dim=4, output_dim=100):
@@ -26,7 +24,7 @@ class ConvDownSample(nn.Module):
         self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = self.lrelu(self.conv2_1(x))
@@ -54,7 +52,7 @@ class ConvLayer(nn.Module):
         self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = self.lrelu(self.conv2_1(x))
@@ -82,7 +80,7 @@ class ConvUpSample(nn.Module):
         self.conv2_4 = nn.Conv2d(hidden_dim, 3, kernel_size = 3, padding = "same")
 
     def forward(self, input):
-        x, t = input
+        x = input
         # t_embed = self.t_linear(t)
         x = self.lrelu(self.conv1_1(x))
         x = x+self.lrelu(self.conv2_1(x))
@@ -109,15 +107,25 @@ class VAE(nn.Module):
     
         # decoder
         self.decoder = ConvUpSample(input_shape, hidden_dim, latent_dim)
+        
+        self.lstm = nn.LSTM(input_size=5*5*latent_dim*2, hidden_size=256, num_layers=4, batch_first=True)
+        self.linear = nn.Linear(256, 5*5*latent_dim*2)
      
     def encode(self, x):
         x = self.encoder(x)
-        mean = x[:, :self.latent_dim, :, :]
-        logvar = x[:, self.latent_dim:, :, :]
-        return mean, logvar
+        return x
     
     def encode_sample(self, x):
         x = self.encoder_sample(x)
+        return x
+    
+    def forward_latent(self, mean_logvar):
+        mean_logvar_sequence = mean_logvar.reshape((mean_logvar.shape[0], mean_logvar.shape[1], -1))
+        x, (h, c) = self.lstm(mean_logvar_sequence)
+        x = self.linear(x.reshape(-1, 256)).reshape(mean_logvar.shape)
+        return x
+    
+    def split(self, x):
         mean = x[:, :self.latent_dim, :, :]
         logvar = x[:, self.latent_dim:, :, :]
         return mean, logvar
@@ -131,66 +139,72 @@ class VAE(nn.Module):
         return self.decoder(x)
 
     def forward(self, input):
-        _, t = input
-        mean, logvar = self.encode(input)
+        input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        mean_logvar = self.encode(input_reshaped)
+        mean_logvar_sequence = mean_logvar.reshape((input.shape[0], input.shape[1], -1))
+        lstm_out, (h, c) = self.lstm(mean_logvar_sequence)
+        mean_logvar_sequence = self.linear(lstm_out.reshape(-1, 256)).reshape(mean_logvar_sequence.shape)
+        mean, logvar = self.split(mean_logvar)
+        mean_sequence, logvar_sequence = self.split(mean_logvar_sequence.reshape((input.shape[0]* input.shape[1], self.latent_dim*2, 5, 5)))
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode((z, t))
-        return x_hat, mean, logvar
-    def forward_sample(self, input):
-        _, t = input
-        mean, logvar = self.encode_sample(input)
-        z = self.reparameterization(mean, logvar)
-        x_hat = self.decode((z, t))
-        return x_hat, mean, logvar
+        z_sequence = self.reparameterization(mean_sequence, logvar_sequence)
+        x_hat = self.decode(z).view((input.shape[0], input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        x_hat_sequence = self.decode(z_sequence).view((input.shape[0], input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        return x_hat, mean.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), x_hat_sequence, mean_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5))
     
+    def forward_sample(self, input):
+        input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
+        mean, logvar = self.encode_sample(input_reshaped)
+        z = self.reparameterization(mean, logvar)
+        x_hat = self.decode(z)
+        return x_hat, mean, logvar
+
 mseloss = torch.nn.MSELoss(reduction='sum')
 def loss_function(x, x_hat, mean, log_var):
     reproduction_loss = mseloss(x_hat, x)
     KLD = - 0.5 * torch.sum(1+ log_var - mean.pow(2) - log_var.exp())
 
-    return reproduction_loss, reproduction_loss + KLD
+    return reproduction_loss + KLD
 
 def kld(mean1, log_var1, mean2, log_var2):
     # return torch.sum((mean1 - mean2).pow(2))
     return - 0.5 * torch.sum(1+ log_var1 - log_var2 - (mean1 - mean2).pow(2)/log_var2.exp() - log_var1.exp()/log_var2.exp())
 # data_x, data_y, data_t = data_x[:5000], data_y[:5000], data_t[:5000]
-X_train, X_test, y_train, y_test, t_train, t_test = train_test_split(data_x, data_y, data_t, test_size = 0.2, shuffle = False)#, random_state = 42)
+X_train, X_test = train_test_split(data_x, test_size = 0.2, shuffle = False)#, random_state = 42)
 
 class CustomDataset(Dataset):
 
-    def __init__(self, x_data, y_data, t_data, device):
-        self.x_data = torch.Tensor(x_data).to(device)
-        self.y_data = torch.Tensor(y_data).to(device)
-        self.t_data = torch.Tensor(t_data).to(device)
-
+    def __init__(self, x_data, device):
+        self.device = device
+        self.x_data = torch.Tensor(x_data)
     def __len__(self):
         return len(self.x_data)
 
     def __getitem__(self, idx):
 
-        return self.x_data[idx], self.y_data[idx], self.t_data[idx]
+        return self.x_data[idx].to(self.device)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device, flush = True)
-model = VAE(150, 0, 4, 2)
+model = VAE(150, 0, 4, 4)
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-train_dataset = CustomDataset(X_train, y_train, t_train, device)
-valid_dataset = CustomDataset(X_test, y_test, t_test, device)
+train_dataset = CustomDataset(X_train, device)
+valid_dataset = CustomDataset(X_test, device)
 def train_epoch(model, optimizer, train_loader):
     losses = []
     model.train()
     with tqdm(total=len(train_loader), desc=f"Train {epoch}: ") as pbar:
         for i, value in enumerate(train_loader):
-            x, y, t = value
-            t = t/21/5000
+            x = value
             target = x
             optimizer.zero_grad()
-            x_hat, mean, log_var = model((target, t))
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, :, ::30, ::30], t))
-            target_reconstruction, loss_target = loss_function(target, x_hat, mean, log_var)
-            sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
-            loss = loss_target + loss_sample# + kld(mean_sample, log_var_sample, mean, log_var) + kld(mean, log_var, mean_sample, log_var_sample)
+            x_hat, mean, log_var, x_hat_sequence, mean_sequence, log_var_sequence = model(target)
+            # x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, :, ::30, ::30], t))
+            loss_target = loss_function(target, x_hat, mean, log_var)
+            loss_target_sequence = loss_function(target[:, 1:, :, :, :], x_hat_sequence[:, :-1, :, :, :], mean_sequence[:, :-1, :, :, :], log_var_sequence[:, :-1, :, :, :])
+            # sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
+            loss = loss_target  + loss_target_sequence + mseloss(mean_sequence[:, :-1, :, :, :], mean[:, 1:, :, :, :]) + mseloss(log_var_sequence[:, :-1, :, :, :], log_var[:, 1:, :, :, :]) # + loss_sample# + kld(mean_sample, log_var_sample, mean, log_var) + kld(mean, log_var, mean_sample, log_var_sample)
             loss.backward()
             losses.append(loss.item())
             optimizer.step()
@@ -204,18 +218,19 @@ def valid_epoch(model, valid_loader):
     model.eval()
     with tqdm(total=len(valid_loader), desc=f"Valid {epoch}: ") as pbar:
         for i, value in enumerate(valid_loader):
-            x, y, t = value
-            t = t/21/5000
+            x = value
             target = x
             optimizer.zero_grad()
-            x_hat, mean, log_var = model((target, t))
-            x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, :, ::30, ::30], t))
-            target_reconstruction, loss_target = loss_function(target, x_hat, mean, log_var)
-            sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
-            loss = loss_target + loss_sample # + kld(mean_sample, log_var_sample, mean, log_var) + kld(mean, log_var, mean_sample, log_var_sample)
+            with torch.no_grad():
+                x_hat, mean, log_var, x_hat_sequence, mean_sequence, log_var_sequence = model(target)
+                # x_hat_sample, mean_sample, log_var_sample = model.forward_sample((target[:, :, ::30, ::30], t))
+                loss_target = loss_function(target, x_hat, mean, log_var)
+                loss_target_sequence = loss_function(target[:, 1:, :, :, :], x_hat_sequence[:, :-1, :, :, :], mean_sequence[:, :-1, :, :, :], log_var_sequence[:, :-1, :, :, :])
+                # sample_reconstruction, loss_sample = loss_function(target, x_hat_sample, mean_sample, log_var_sample)
+                loss = loss_target  + loss_target_sequence  + mseloss(mean_sequence[:, :-1, :, :, :], mean[:, 1:, :, :, :]) + mseloss(log_var_sequence[:, :-1, :, :, :], log_var[:, 1:, :, :, :])# + kld(mean_sequence[:, :-1, :, :, :], log_var_sequence[:, :-1, :, :, :], mean[:, 1:, :, :, :], log_var[:, 1:, :, :, :]) # + loss_sample# + kld(mean_sample, log_var_sample, mean, log_var) + kld(mean, log_var, mean_sample, log_var_sample)
 
-            loss_val = loss.item()
-            losses.append(loss_val)
+                loss_val = loss.item()
+                losses.append(loss_val)
             # scheduler.step()
             pbar.update(1)
             pbar.set_postfix_str(
@@ -227,4 +242,5 @@ for epoch in range(200):
     print('EPOCH {}:'.format(epoch + 1))
     train_epoch(model, optimizer, train_loader)
     valid_epoch(model, valid_loader)
-torch.save(model, "model_cnn_200.ckpt")
+    if (epoch + 1)%50 == 0:
+        torch.save(model, f"model_cnn_dynamics_simple_{epoch}.ckpt")

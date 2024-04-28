@@ -36,15 +36,23 @@ def eta_animation(X, Y, eta_list, frame_interval, filename):
         codec = "libx264", extra_args = ["-pix_fmt", "yuv420p"])
     anim.save("{}.mp4".format(filename), writer = mpeg_writer)
     return anim    # Need to return anim object to see the animation
-def eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list_ensf, frame_interval, filename):
+def eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list_ensf, title_list, frame_interval, filename):
     """Function that takes in the domain x, y (2D meshgrids) and a list of 2D arrays
     eta_list and creates an animation of all eta images. To get updating title one
     also need specify time step dt between each frame in the simulation, the number
     of time steps between each eta in eta_list and finally, a filename for video."""
+    plt.tick_params(left = False, right = False , labelleft = False , 
+                labelbottom = False, bottom = False) 
     fig, ax = plt.subplots(2, 2)
+    ax[0][0].tick_params(left = False, right = False , labelleft = False , 
+                labelbottom = False, bottom = False) 
+    ax[0][1].tick_params(left = False, right = False , labelleft = False , 
+                labelbottom = False, bottom = False) 
+    ax[1][0].tick_params(left = False, right = False , labelleft = False , 
+                labelbottom = False, bottom = False) 
+    ax[1][1].tick_params(left = False, right = False , labelleft = False , 
+                labelbottom = False, bottom = False) 
     #plt.title("Velocity field $\mathbf{u}(x,y)$ after 0.0 days", fontname = "serif", fontsize = 17)
-    plt.xlabel("x [m]", fontname = "serif", fontsize = 12)
-    plt.ylabel("y [m]", fontname = "serif", fontsize = 12)
     pmesh = [[ax[j][i].pcolormesh(X, Y, eta_list[0], vmin = -0.7*np.abs(eta_list[int(len(eta_list)/2)]).max(),
         vmax = np.abs(eta_list[int(len(eta_list)/2)]).max(), cmap = plt.cm.RdBu_r) for i in range(2)] for j in range(2)]
     plt.colorbar(pmesh[0][0], orientation = "vertical")
@@ -53,23 +61,21 @@ def eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list_en
     def update_eta(num):
         ax[0][0].set_title("$\eta$".format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        ax[0][1].set_title("Reconstruction".format(
+        ax[0][1].set_title(title_list[0], fontname = "serif", fontsize = 16)
+        ax[1][0].set_title(title_list[1].format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        ax[1][0].set_title("Placeholder".format(
+        ax[1][1].set_title(title_list[2].format(
             num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        ax[1][1].set_title("Placeholder".format(
-            num*frame_interval/3600), fontname = "serif", fontsize = 16)
-        pmesh[0][0].set_array(eta_list[num][:-1, :-1].flatten())
-        pmesh[0][1].set_array(eta_list_2[num][:-1, :-1].flatten())
-        pmesh[1][0].set_array(eta_list_enkf[num][:-1, :-1].flatten())
-        pmesh[1][1].set_array(eta_list_ensf[num][:-1, :-1].flatten())
+        pmesh[0][0].set_array(eta_list[num].flatten())
+        pmesh[0][1].set_array(eta_list_2[num].flatten())
+        pmesh[1][0].set_array(eta_list_enkf[num].flatten())
+        pmesh[1][1].set_array(eta_list_ensf[num].flatten())
         return pmesh,
 
     anim = animation.FuncAnimation(fig, update_eta,
         frames = len(eta_list), interval = 10, blit = False)
-    mpeg_writer = animation.FFMpegWriter(fps = 24, bitrate = 10000,
-        codec = "libx264", extra_args = ["-pix_fmt", "yuv420p"])
-    anim.save("{}.mp4".format(filename), writer = mpeg_writer)
+    pillow_writer = animation.PillowWriter(fps = 24, bitrate = 10000)
+    anim.save("{}.gif".format(filename), writer = pillow_writer)
     return anim    # Need to return anim object to see the animation
 def velocity_animation(X, Y, u_list, v_list, frame_interval, filename):
     """Function that takes in the domain x, y (2D meshgrids) and a lists of 2D arrays
