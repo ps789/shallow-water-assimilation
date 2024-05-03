@@ -285,7 +285,7 @@ N_y = 150                            # Number of grid points in y-direction
 # model.load_state_dict(temp_model.state_dict())
 latent_channels = 4
 cnn_model = CNN_VAE(150, 0, 4, latent_channels).to(device)
-temp_model = torch.load("./results/model_cnn_100.ckpt")
+temp_model = torch.load("./model_cnn_100.ckpt")
 cnn_model.load_state_dict(temp_model.state_dict())
 
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
@@ -728,7 +728,7 @@ t_0 = time.perf_counter()  # For timing the computation loop
 # ==================================================================================
 # ========================= Main time loop for simulation ==========================
 # ==================================================================================
-while (time_step < 0):
+while (time_step < max_time_step):
     # ------------ Computing values for u and v at next time step --------------
     u_np1[:, :-1, :] = u_n[:, :-1, :] - g*dt/dx*(eta_n[:, 1:, :] - eta_n[:, :-1, :])
     v_np1[:, :, :-1] = v_n[:, :, :-1] - g*dt/dy*(eta_n[:, :, 1:] - eta_n[:, :, :-1])
@@ -801,7 +801,7 @@ while (time_step < 0):
             x_hat, mean, log_var = cnn_model((target_true, t_rep))
             t_rep = torch.Tensor([time_step*dt]*target.shape[0]).to(device).unsqueeze(1)
             x_hat_sample, mean_sample, log_var_sample = cnn_model.forward_sample((target_true[:, :, ::30, ::30], t_rep))
-            latent = cnn_model.decode((torch.Tensor(my_EnKF(mean_current.view(mean_current.shape[0], -1).detach().cpu().numpy().T, mean.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, latent_channels, 5, 5), t_rep)).detach().cpu().numpy()
+            latent = cnn_model.decode((torch.Tensor(my_EnKF(mean_current.view(mean_current.shape[0], -1).detach().cpu().numpy().T, mean_sample.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, latent_channels, 5, 5), t_rep)).detach().cpu().numpy()
             eta_n = latent[:, 2 , :, :]
             u_n = latent[:, 0, :, :]
             v_n = latent[:, 1, :, :]
@@ -998,7 +998,7 @@ t_0 = time.perf_counter()  # For timing the computation loop
 # ==================================================================================
 # ========================= Main time loop for simulation ==========================
 # ==================================================================================
-while (time_step < max_time_step):
+while (time_step < 0):
     # ------------ Computing values for u and v at next time step --------------
     u_np1[:, :-1, :] = u_n[:, :-1, :] - g*dt/dx*(eta_n[:, 1:, :] - eta_n[:, :-1, :])
     v_np1[:, :, :-1] = v_n[:, :, :-1] - g*dt/dy*(eta_n[:, :, 1:] - eta_n[:, :, :-1])
@@ -1133,7 +1133,7 @@ print("\nVisualizing results...")
 #viz_tools.quiver_plot(X, Y, u_n, v_n, "Final state of velocity field $\mathbf{u}(x,y)$")
 #viz_tools.hovmuller_plot(x, t_sample, hm_sample)
 #viz_tools.plot_time_series_and_ft(t_sample, ts_sample)
-eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_ensf, eta_list, anim_interval*dt, "eta")
+eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list, ["Perturbed", "EnKF", "$\eta$"], anim_interval*dt, "eta")
 #eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, "eta_surface")
 #quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, "velocity")
 # ============================ Done with visualization =============================

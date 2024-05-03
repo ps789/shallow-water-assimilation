@@ -121,7 +121,7 @@ if (use_sink is True):
 # Write all parameters out to file.
 with open("param_output.txt", "w") as output_file:
     output_file.write(param_string)
-for pbar in tqdm(range(200)):
+for pbar in tqdm(range(20)):
     # Also print parameters to screen
     x_data = []
     y_data = []

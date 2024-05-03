@@ -56,8 +56,8 @@ param_string += "\nuse_source = {}\nuse_sink = {}".format(use_source, use_sink)
 param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 
 # --------------- Computational prameters ---------------
-N_x = 75                            # Number of grid points in x-direction
-N_y = 75                            # Number of grid points in y-direction
+N_x = 150                            # Number of grid points in x-direction
+N_y = 150                            # Number of grid points in y-direction
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
 dy = L_y/(N_y - 1)                   # Grid spacing in y-direction
 dt = 0.1*min(dx, dy)/np.sqrt(g*H)    # Time step (defined from the CFL condition)
@@ -382,6 +382,7 @@ while (time_step < max_time_step):
 
     # Store eta and (u, v) every anin_interval time step for animations.
     if (time_step % anim_interval == 0):
+        print("hi")
         print("Time: \t{:.2f} hours".format(time_step*dt/3600))
         print("Step: \t{} / {}".format(time_step, max_time_step))
         print("Mass: \t{}\n".format(np.sum(eta_n)))
@@ -497,7 +498,7 @@ t_0 = time.perf_counter()  # For timing the computation loop
 # ==================================================================================
 # ========================= Main time loop for simulation ==========================
 # ==================================================================================
-while (time_step < 0):#max_time_step):
+while (time_step < max_time_step):
     # ------------ Computing values for u and v at next time step --------------
     u_np1[:, :-1, :] = u_n[:, :-1, :] - g*dt/dx*(eta_n[:, 1:, :] - eta_n[:, :-1, :])
     v_np1[:, :, :-1] = v_n[:, :, :-1] - g*dt/dy*(eta_n[:, :, 1:] - eta_n[:, :, :-1])

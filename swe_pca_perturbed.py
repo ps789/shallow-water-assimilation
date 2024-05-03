@@ -399,8 +399,8 @@ while (time_step < max_time_step):
 
 # ======================EnKF=====================================================================================
 
-PCA_V = np.load("./results/PCA_V.npy", allow_pickle = True)
-PCA_means = np.load("./results/PCA_means.npy", allow_pickle = True)
+PCA_V = np.load("./PCA_V.npy", allow_pickle = True)
+PCA_means = np.load("./PCA_means.npy", allow_pickle = True)
 ensemble_size = 200
 
 # Useful linear algebra: compute B/A
@@ -623,7 +623,7 @@ print("\nVisualizing results...")
 #viz_tools.quiver_plot(X, Y, u_n, v_n, "Final state of velocity field $\mathbf{u}(x,y)$")
 #viz_tools.hovmuller_plot(x, t_sample, hm_sample)
 #viz_tools.plot_time_series_and_ft(t_sample, ts_sample)
-eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list, anim_interval*dt, "eta")
+eta_anim = viz_tools.eta_animation_overlay(X, Y, eta_list, eta_list_2, eta_list_enkf, eta_list, ["Perturbed", "EnKF", "$\eta$"], anim_interval*dt, "eta")
 #eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, "eta_surface")
 #quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, "velocity")
 # ============================ Done with visualization =============================

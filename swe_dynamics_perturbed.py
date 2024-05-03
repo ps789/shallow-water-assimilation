@@ -119,6 +119,35 @@ class ConvUpSample(nn.Module):
         x = self.conv2_4(x)
         return(x)
     
+class ConvLayer_2(nn.Module):
+    def __init__(self, input_shape=5, hidden_dim=4, output_dim=100):
+        super(ConvLayer_2, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.input_shape = input_shape
+        self.conv1_1 = nn.Conv2d(3, hidden_dim, kernel_size = 3, padding = "same")
+        self.conv2_1 = nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size = 3,padding = "same")
+        self.lrelu = nn.LeakyReLU(0.2)
+        self.conv1_2 = nn.Conv2d(hidden_dim*2, hidden_dim*2, kernel_size = 3, padding = "same")
+        self.conv2_2 = nn.Conv2d(hidden_dim*2, hidden_dim * 4, kernel_size = 3, padding = "same")
+        self.conv1_3 = nn.Conv2d(hidden_dim*4, hidden_dim*4, kernel_size = 3, padding = "same")
+        self.conv2_3 = nn.Conv2d(hidden_dim*4, hidden_dim * 8, kernel_size = 3, stride = 2, padding = 1)
+        self.conv1_4 = nn.Conv2d(hidden_dim*8, hidden_dim*8, kernel_size = 3, padding = "same")
+        self.conv2_4 = nn.Conv2d(hidden_dim*8, output_dim, kernel_size = 3, padding = "same")
+
+    def forward(self, input):
+        x = input
+        # t_embed = self.t_linear(t)
+        x = self.lrelu(self.conv1_1(x))
+        x = self.lrelu(self.conv2_1(x))
+        x = x + self.lrelu(self.conv1_2(x))
+        x = self.lrelu(self.conv2_2(x))
+        x = x + self.lrelu(self.conv1_3(x))
+        x = self.lrelu(self.conv2_3(x))
+        x = x + self.lrelu(self.conv1_4(x))
+        x = self.conv2_4(x)
+        return(x)
+    
+    
 class VAE(nn.Module):
     def __init__(self, input_shape=150, sample_shape = 5, hidden_dim=4, latent_dim=10):
         super(VAE, self).__init__()
@@ -127,7 +156,7 @@ class VAE(nn.Module):
         self.encoder = ConvDownSample(input_shape, hidden_dim, latent_dim*2)
         
         # encoder
-        self.encoder_sample = ConvLayer(input_shape, hidden_dim, latent_dim*2)
+        self.encoder_sample = ConvLayer_2(input_shape, hidden_dim, latent_dim*2)
     
         # decoder
         self.decoder = ConvUpSample(input_shape, hidden_dim, latent_dim)
@@ -165,11 +194,13 @@ class VAE(nn.Module):
     def forward(self, input):
         input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
         mean_logvar = self.encode(input_reshaped)
+        #batch* seq_len, 8, 5, 5
         mean_logvar_sequence = mean_logvar.reshape((input.shape[0], input.shape[1], -1))
-        #batch_size, seq_len, hidden_dimension = 5*5*8 = 200
+        #batch, seq_len, 8*5*5
         lstm_out, (h, c) = self.lstm(mean_logvar_sequence)
-        #batch_size, seq_len, 
+        #batch, seq_len, 256
         mean_logvar_sequence = self.linear(lstm_out.reshape(-1, 256)).reshape(mean_logvar_sequence.shape)
+        #batch*seq_len, 256 -> batch*seq_len, 200 -> batch, seq_len, 8*5*5
         mean, logvar = self.split(mean_logvar)
         mean_sequence, logvar_sequence = self.split(mean_logvar_sequence.reshape((input.shape[0]* input.shape[1], self.latent_dim*2, 5, 5)))
         z = self.reparameterization(mean, logvar)
@@ -180,10 +211,22 @@ class VAE(nn.Module):
     
     def forward_sample(self, input):
         input_reshaped = input.view((input.shape[0] * input.shape[1], input.shape[2], input.shape[3], input.shape[4]))
-        mean, logvar = self.encode_sample(input_reshaped)
+        mean_logvar = self.encode_sample(input_reshaped)
+        #batch* seq_len, 8, 5, 5
+        mean_logvar_sequence = mean_logvar.reshape((input.shape[0], input.shape[1], -1))
+        #batch, seq_len, 8*5*5
+        lstm_out, (h, c) = self.lstm(mean_logvar_sequence)
+        #batch, seq_len, 256
+        mean_logvar_sequence = self.linear(lstm_out.reshape(-1, 256)).reshape(mean_logvar_sequence.shape)
+        #batch*seq_len, 256 -> batch*seq_len, 200 -> batch, seq_len, 8*5*5
+        mean, logvar = self.split(mean_logvar)
+        mean_sequence, logvar_sequence = self.split(mean_logvar_sequence.reshape((input.shape[0]* input.shape[1], self.latent_dim*2, 5, 5)))
         z = self.reparameterization(mean, logvar)
-        x_hat = self.decode(z)
-        return x_hat, mean, logvar
+        z_sequence = self.reparameterization(mean_sequence, logvar_sequence)
+        x_hat = self.decode(z).view((input.shape[0], input.shape[1], input.shape[2], 150, 150))
+        x_hat_sequence = self.decode(z_sequence).view((input.shape[0], input.shape[1], input.shape[2], 150, 150))
+        return x_hat, mean.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), x_hat_sequence, mean_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5)), logvar_sequence.view((input.shape[0], input.shape[1], self.latent_dim, 5, 5))
+
     
 mseloss = torch.nn.MSELoss(reduction='mean')
 def loss_function(x, x_hat, mean, log_var):
@@ -224,7 +267,7 @@ N_y = 150                            # Number of grid points in y-direction
 # model.load_state_dict(temp_model.state_dict())
 latent_channels = 4
 cnn_model = VAE(150, 0, 4, latent_channels).to(device)
-temp_model = torch.load("./model_cnn_dynamics_simple_49.ckpt")
+temp_model = torch.load("./model_cnn_dynamics_15_199.ckpt")
 cnn_model.load_state_dict(temp_model.state_dict())
 
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
@@ -745,7 +788,8 @@ while (time_step < max_time_step):
         with torch.no_grad():
             target_true = torch.Tensor(np.stack([u_list[time_step // anim_interval - 1], v_list[time_step // anim_interval - 1], eta_list[time_step // anim_interval - 1]], axis = 0)).unsqueeze(0).to(device)
             mean_current, log_var_current = cnn_model.split(state[:, -1, :, :, :])
-            mean, logvar = cnn_model.split(cnn_model.encode(target_true))
+            # mean, logvar = cnn_model.split(cnn_model.encode(target_true))
+            mean, logvar = cnn_model.split(cnn_model.encode_sample(target_true[:, :, ::15, ::15]))
             latent_assimilated = torch.Tensor(my_EnKF(mean_current.view(mean_current.shape[0], -1).detach().cpu().numpy().T, mean.detach().cpu().numpy().reshape(-1) + R12 @ rnd.randn(R12.shape[0]), ensemble_size, scaling)).to(device).T.reshape(ensemble_size, latent_channels, 5, 5)
             latent = cnn_model.decode(latent_assimilated).detach().cpu().numpy()
             eta_n = latent[:, 2 , :, :]
@@ -759,6 +803,9 @@ while (time_step < max_time_step):
 
     # Store eta and (u, v) every anin_interval time step for animations.
     if (time_step % anim_interval == 0):
+        print("Time")
+        print(time.perf_counter() - t_0)
+        t_0 = time.perf_counter()
         print("Time: \t{:.2f} hours".format(time_step*dt/3600))
         print("Step: \t{} / {}".format(time_step, max_time_step))
         print("Mass: \t{}\n".format(np.sum(np.mean(eta_n, axis = 0))))
@@ -770,7 +817,7 @@ while (time_step < max_time_step):
         print(rmse_temp)
         rmse_list_cnn.append(rmse_temp)
 
-np.save("swe_dynamics_swe_enkf.npy", np.array(rmse_list_cnn), allow_pickle = True)
+np.save("swe_dynamics_15_swe_enkf_sparse.npy", np.array(rmse_list_cnn), allow_pickle = True)
 
 
 # Don't use numpy's mean, cov, but rather a `for` loop.
